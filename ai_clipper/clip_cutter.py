@@ -44,10 +44,13 @@ def create_ass_subtitle_file(
     output_path: Path,
     config: ClipperConfig,
     shift_start: float = 0.0,
+    hook_title: str = "",
 ) -> Path:
     """
     Create an ASS subtitle file from word timestamps.
     Automatically adjusts PlayRes for vertical crop if enabled.
+    When ``hook_title`` is set and ``config.show_hook_title`` is on, a bold
+    title is burned near the top for the first ``config.hook_title_duration``s.
     """
     font_size = config.caption_font_size
     max_chars = config.caption_max_chars_per_line
@@ -69,6 +72,7 @@ def create_ass_subtitle_file(
         alignment = 2  # bottom-center
         margin_v = 50
 
+    title_font_size = int(font_size * 1.3)
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -86,11 +90,26 @@ def create_ass_subtitle_file(
             f"&H00000000, &H80000000, 1, 0, 0, 0, 100, 100, 0, 0, 1, "
             f"3.5, 1.5, {alignment}, 60, 60, {margin_v}, 1"
         ),
+        # Bold hook title anchored near the top (alignment 8 = top-center).
+        (
+            f"Style: HookTitle, Arial, {title_font_size}, &H0000FFFF, &H000000FF, "
+            f"&H00000000, &H80000000, 1, 0, 0, 0, 100, 100, 0, 0, 1, "
+            f"4.0, 2.0, 8, 60, 60, 120, 1"
+        ),
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
         "MarginV, Effect, Text",
     ]
+
+    if hook_title and config.show_hook_title:
+        title_text = (
+            hook_title.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+        )
+        title_end = _format_ass_time(max(0.5, config.hook_title_duration))
+        lines.append(
+            f"Dialogue: 1,0:00:00.00,{title_end},HookTitle,,0,0,0,,{title_text}"
+        )
 
     # Group words into caption lines
     current_line: List[str] = []
@@ -184,10 +203,11 @@ def cut_and_caption_clip(
     words: list,
     config: ClipperConfig,
     extra_padding: float = 0.3,
+    hook_title: str = "",
 ) -> Path:
     """
     Cut a clip from the video and burn captions onto it.
-    Supports optional 9:16 vertical cropping.
+    Supports optional 9:16 vertical cropping and a hook title overlay.
     """
     clip_start = max(0, start_time - extra_padding)
     clip_end = end_time + extra_padding
@@ -205,7 +225,9 @@ def cut_and_caption_clip(
 
     # Create ASS subtitle file
     ass_path = output_path.with_suffix(".ass")
-    create_ass_subtitle_file(clip_words, ass_path, config, shift_start=clip_start)
+    create_ass_subtitle_file(
+        clip_words, ass_path, config, shift_start=clip_start, hook_title=hook_title
+    )
 
     # Build filter chain (crop + subtitles)
     ass_path_str = str(ass_path).replace("\\", "/").replace(":", "\\\\:")

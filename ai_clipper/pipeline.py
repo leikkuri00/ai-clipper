@@ -531,12 +531,13 @@ class AIClipper:
             output_path = self._make_output_path(
                 video_path, opt, f"standalone_{i:02d}", clip_index
             )
+            meta = self._optimized_to_meta(opt, "standalone", i, clip_index)
             clip = cut_and_caption_clip(
-                video_path, output_path, opt.start_time, opt.end_time, all_words, self.config
+                video_path, output_path, opt.start_time, opt.end_time, all_words,
+                self.config, hook_title=meta["title"],
             )
             output_clips.append(clip)
-            
-            meta = self._optimized_to_meta(opt, "standalone", i, clip_index)
+
             clip_meta.append(meta)
             self._write_hashtags_file(clip, meta["title"], meta["hashtags"])
             clip_index += 1
@@ -552,7 +553,8 @@ class AIClipper:
                     title=episode.title,
                 )
                 clip = cut_and_caption_clip(
-                    video_path, output_path, episode.start_time, episode.end_time, all_words, self.config
+                    video_path, output_path, episode.start_time, episode.end_time,
+                    all_words, self.config, hook_title=episode.title,
                 )
                 output_clips.append(clip)
                 
