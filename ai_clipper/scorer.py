@@ -266,7 +266,7 @@ class ViralScorer:
         response = ollama.chat(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.3, "num_predict": 1024},
+            options={"temperature": 0.3, "num_predict": 2048},
         )
         return response["message"]["content"]
 
@@ -280,7 +280,7 @@ class ViralScorer:
             model=self.model if not base_url else self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
-            max_tokens=1024,
+            max_tokens=2048,
         )
         return response.choices[0].message.content or ""
 
@@ -391,8 +391,9 @@ class ViralScorer:
         if not text.strip() or len(text.strip()) < 20:
             return None
 
-        # Truncate to keep prompt manageable
-        max_chars = 2500
+        # Give the model the full clip transcript (2:28 clips ~ 2-3k chars);
+        # only truncate pathologically long inputs.
+        max_chars = 6000
         if len(text) > max_chars:
             text = text[:max_chars] + "..."
 
@@ -614,19 +615,44 @@ Respond ONLY with: {{"hashtags": ["tag1", "tag2", ...]}}"""
 
     @staticmethod
     def _parse_json(text: str) -> Optional[dict]:
-        """Extract valid JSON from LLM response, stripping markdown/code fences."""
+        """
+        Extract a JSON object from an LLM response.
+
+        Tolerant of markdown fences and of responses that were cut off before the
+        closing brace (common with smaller models and long rubrics): first tries
+        strict parsing, then brace-repair, then a key/value regex fallback so a
+        truncated score is still usable instead of being dropped entirely.
+        """
         if not text:
             return None
-        text = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
-        text = re.sub(r'\s*```$', '', text.strip(), flags=re.MULTILINE)
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
+        cleaned = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r'\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
+
+        # 1) Strict: largest {...} span, then the whole string.
+        match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+        for candidate in ([match.group()] if match else []) + [cleaned]:
             try:
-                return json.loads(match.group())
+                return json.loads(candidate)
             except json.JSONDecodeError:
                 pass
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        return None
+
+        # 2) Repair a truncated object: drop the trailing incomplete field and
+        #    balance braces.
+        start = cleaned.find("{")
+        if start != -1:
+            frag = cleaned[start:]
+            frag = re.sub(r',\s*"[^"]*"\s*:?\s*[^,{}\[\]]*$', '', frag)  # partial last pair
+            frag = frag.rstrip().rstrip(",")
+            frag += "}" * max(0, frag.count("{") - frag.count("}"))
+            try:
+                return json.loads(frag)
+            except json.JSONDecodeError:
+                pass
+
+        # 3) Last resort: pull out "key": value pairs directly.
+        result: dict = {}
+        for key, num in re.findall(r'"([\w ]+)"\s*:\s*(-?\d+(?:\.\d+)?)', cleaned):
+            result[key] = float(num)
+        for key, sval in re.findall(r'"([\w ]+)"\s*:\s*"([^"]*)"', cleaned):
+            result.setdefault(key, sval)
+        return result or None

@@ -50,28 +50,28 @@ class StorySeries(BaseModel):
 
 STORY_SERIES_PROMPT = """You are an elite documentary and YouTube series editor.
 
-Analyze these semantic segments and identify the 3 BEST narrative arcs that can be split into 3 continuous episodes (~2 minutes each).
+Analyze these semantic segments and identify the {num_series} BEST narrative arc(s). Each arc is split into 3 continuous episodes of about {episode_seconds:.0f} seconds each. The 3 episodes of an arc, played in order, must together tell ONE complete, maximally viral story.
 
 SEGMENTS:
 {segments_json}
 
 Rules for each story series:
-1. Episode 1 (hook + setup + conflict + cliffhanger): ~120 seconds
-2. Episode 2 (escalation + twist + discoveries + stronger cliffhanger): ~120 seconds, begins exactly where Episode 1 ends
-3. Episode 3 (resolution + lesson + payoff + emotional ending): ~120 seconds, begins exactly where Episode 2 ends
-4. No skipped footage, no overlap, no repeated scenes between episodes.
-5. Together, all 3 episodes must tell one complete story.
+1. Episode 1 (hook + setup + conflict + cliffhanger): ~{episode_seconds:.0f} seconds
+2. Episode 2 (escalation + twist + discoveries + stronger cliffhanger): ~{episode_seconds:.0f} seconds, begins exactly where Episode 1 ends
+3. Episode 3 (resolution + lesson + payoff + emotional ending): ~{episode_seconds:.0f} seconds, begins exactly where Episode 2 ends
+4. No skipped footage, no overlap, no repeated scenes between episodes — strictly chronological.
+5. Together, all 3 episodes must tell one complete story with a clear beginning, middle, and end.
 6. Each episode should be understandable on its own but stronger as part of the series.
-7. Choose arcs with strong emotional progression and a satisfying payoff.
+7. Choose the arc(s) with the strongest hook, emotional progression, and a satisfying payoff — the most shareable story in the source.
 
-For each of the 3 story series, return:
+For each story series, return:
 - series title
 - overall_story_score (0-100)
 - episode_1: title, start_segment_id, end_segment_id, cliffhanger text
 - episode_2: title, start_segment_id, end_segment_id, cliffhanger text
 - episode_3: title, start_segment_id, end_segment_id, ending text
 
-Respond ONLY with a JSON array of 3 objects. No markdown, no code fences.
+Respond ONLY with a JSON array of {num_series} object(s). No markdown, no code fences.
 
 Example format:
 [
@@ -91,28 +91,33 @@ class StorySeriesBuilder:
     def __init__(
         self,
         scorer: ViralScorer,
-        episode_target_duration: float = 120.0,
+        episode_target_duration: float = 148.0,
         tolerance: float = 10.0,
+        num_series: int = 1,
     ):
         self._scorer = scorer
         self.episode_target_duration = episode_target_duration
         self.tolerance = tolerance
+        self.num_series = max(1, num_series)
 
     def build_series(
         self,
         segments: List[SemanticSegment],
         all_words: List,
+        num_series: Optional[int] = None,
     ) -> List[StorySeries]:
         """
-        Build 3 story series from semantic segments.
+        Build the requested number of continuous story series from segments.
 
         Args:
             segments: Semantic segments
             all_words: Full word-level transcript
+            num_series: How many series to build (defaults to configured value)
 
         Returns:
-            List of 3 StorySeries
+            List of StorySeries (each = 3 chronological episodes telling one story)
         """
+        target_count = max(1, num_series or self.num_series)
         if len(segments) < 9:
             logger.warning("Not enough semantic segments for story series; need at least 9")
             return []
@@ -139,34 +144,38 @@ class StorySeriesBuilder:
         if len(segments_json) > 12000:
             segments_json = segments_json[:12000] + "\n...[truncated]"
 
-        prompt = STORY_SERIES_PROMPT.format(segments_json=segments_json)
+        prompt = STORY_SERIES_PROMPT.format(
+            segments_json=segments_json,
+            num_series=target_count,
+            episode_seconds=self.episode_target_duration,
+        )
 
         try:
             response = self._scorer.call_llm(prompt)
             parsed = self._parse_json(response)
         except Exception as e:
             logger.error(f"Story series LLM call failed: {e}")
-            return self._fallback_series(segments, all_words)
+            return self._fallback_series(segments, all_words)[:target_count]
 
         if not parsed or not isinstance(parsed, list):
             logger.warning("Story series response invalid, using fallback")
-            return self._fallback_series(segments, all_words)
+            return self._fallback_series(segments, all_words)[:target_count]
 
         series_list = []
-        for series_data in parsed[:3]:
+        for series_data in parsed[:target_count]:
             series = self._build_single_series(series_data, segments, all_words)
             if series:
                 series_list.append(series)
 
-        # If we got fewer than 3, fill with fallback
-        while len(series_list) < 3:
+        # If we got fewer than requested, fill with fallback
+        while len(series_list) < target_count:
             fallback = self._fallback_single_series(segments, all_words, series_list)
             if fallback:
                 series_list.append(fallback)
             else:
                 break
 
-        return series_list
+        return series_list[:target_count]
 
     def _build_single_series(
         self,

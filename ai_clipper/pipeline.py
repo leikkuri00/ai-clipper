@@ -88,6 +88,7 @@ class AIClipper:
         self.story_builder = StorySeriesBuilder(
             scorer=self.scorer,
             episode_target_duration=self.config.episode_target_duration,
+            num_series=self.config.num_story_series,
         )
         self._scored_segments_cache: List[ScoredSegment] = []
 
@@ -215,16 +216,19 @@ class AIClipper:
                 top_k=max(100, self.config.num_clips * 15),
             )
 
-            # Step 10: Select 8 standalone clips with diversity
-            logger.info("Selecting 8 diverse standalone clips...")
-            standalone = self._select_standalone_clips(optimized)
+            # Step 10: Select standalone clips with diversity
+            standalone: List[OptimizedClip] = []
+            if not self.config.story_only:
+                logger.info(f"Selecting {self.config.num_clips} diverse standalone clips...")
+                standalone = self._select_standalone_clips(optimized)
 
             # Step 11: Build story series
             story_series: List[StorySeries] = []
-            if not self.config.skip_story_series and not self.config.story_only:
-                logger.info("Building 3 story series...")
+            if not self.config.skip_story_series:
+                logger.info(f"Building {self.config.num_story_series} story series...")
                 story_series = self.story_builder.build_series(
-                    semantic_segments, transcript.all_words
+                    semantic_segments, transcript.all_words,
+                    num_series=self.config.num_story_series,
                 )
 
             # Step 12: Moderate and cut clips

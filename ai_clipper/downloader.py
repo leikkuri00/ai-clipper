@@ -149,6 +149,47 @@ def _run_ytdlp_with_cookies(
     return result
 
 
+def _is_youtube(url: str) -> bool:
+    return bool(re.search(r"(?:youtube\.com|youtu\.be)", url or "", re.IGNORECASE))
+
+
+_REMOTE_COMPONENTS_SUPPORTED: Optional[bool] = None
+
+
+def _supports_remote_components() -> bool:
+    """Whether the installed yt-dlp understands --remote-components (cached)."""
+    global _REMOTE_COMPONENTS_SUPPORTED
+    if _REMOTE_COMPONENTS_SUPPORTED is None:
+        try:
+            help_text = subprocess.run(
+                _find_ytdlp_command() + ["--help"],
+                capture_output=True, text=True, timeout=30,
+            ).stdout
+            _REMOTE_COMPONENTS_SUPPORTED = "--remote-components" in help_text
+        except Exception:
+            _REMOTE_COMPONENTS_SUPPORTED = False
+    return _REMOTE_COMPONENTS_SUPPORTED
+
+
+def _youtube_extra_args(url: str) -> list[str]:
+    """
+    Extra yt-dlp args needed for modern YouTube downloads.
+
+    YouTube gates real formats behind a JavaScript "n"-signature challenge.
+    yt-dlp can solve it by fetching the EJS challenge solver, but that requires
+    a JS runtime (Deno or Node) on PATH. Only enabled when supported.
+    """
+    if not _is_youtube(url) or not _supports_remote_components():
+        return []
+    if not (shutil.which("deno") or shutil.which("node")):
+        logger.warning(
+            "No JavaScript runtime (deno/node) found; YouTube may only offer "
+            "low-quality or no formats. Install Deno or Node.js to fix this."
+        )
+        return []
+    return ["--remote-components", "ejs:github"]
+
+
 def _find_downloaded_file(output_dir: Path, before_files: set[Path], preferred_format: str) -> Path | None:
     """Find the newly created downloaded file in the output directory."""
     candidates = [
@@ -219,6 +260,7 @@ def download_video(
         "--no-simulate",
         "--no-warnings",
         "--no-progress",
+        *_youtube_extra_args(url),
         url,
     ]
 
@@ -313,6 +355,7 @@ def get_video_info(url: str, cookies_from_browser: str = "", cookiefile: str = "
     cmd = _find_ytdlp_command() + [
         "--dump-json",
         "--no-playlist",
+        *_youtube_extra_args(url),
         url,
     ]
     result = _run_ytdlp_with_cookies(cmd, cookies_from_browser, cookiefile)

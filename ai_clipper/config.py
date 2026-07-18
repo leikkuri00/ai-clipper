@@ -59,9 +59,11 @@ class ClipperConfig:
     iterative_rounds: int = 3                    # optimization refinement rounds
 
     # ── Master Prompt: Output B - Story Series ────────────
-    num_story_series: int = 3                    # 3 story series
-    episodes_per_series: int = 3                 # 3 episodes each
-    episode_target_duration: float = 120.0       # ~2 min per episode
+    # One continuous 3-episode series that tells the full most-viral story,
+    # each episode picking up chronologically where the previous ended.
+    num_story_series: int = 1                     # best complete story arc
+    episodes_per_series: int = 3                  # 3 chronological episodes
+    episode_target_duration: float = 148.0        # 2 min 28 sec per episode
 
     # ── Segment / chunking ─────────────────────────────────
     chunk_duration_sec: float = 1200.0  # ~20 min chunks for LLM

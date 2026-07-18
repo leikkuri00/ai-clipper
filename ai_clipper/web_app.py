@@ -115,8 +115,11 @@ with st.sidebar:
 
     st.subheader("📖 Story Series")
     enable_story_series = st.checkbox("Generate story series", value=True)
-    num_story_series = st.slider("Number of story series", 0, 5, 3)
-    episode_duration = st.slider("Episode target duration (sec)", 60, 180, 120, 5)
+    num_story_series = st.slider(
+        "Number of story series", 0, 5, 1,
+        help="Each series = 3 chronological episodes that together tell one full story.",
+    )
+    episode_duration = st.slider("Episode target duration (sec)", 60, 240, 148, 5)
 
     st.divider()
 
