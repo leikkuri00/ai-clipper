@@ -1,0 +1,13 @@
+{
+  "server": {
+    "listen": "127.0.0.1",
+    "port": 5100,
+    "max_workers": 2
+  },
+  "runtime": {
+    "model_dir": "models",
+    "model_file": "",
+    "backend": "auto",
+    "n_ctx": 8192
+  }
+}

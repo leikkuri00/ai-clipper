@@ -1,0 +1,14 @@
+# Agent configuration (local-first)
+agent:
+  name: local-coder-agent
+  run_mode: local
+  allow_network_downloads: true
+  default_model_dir: models
+model_recommendation:
+  prefer_gpu: true
+  prefer_vulkan: true
+  recommended_models:
+    - qwen2.5-coder
+    - qwen3-coder
+    - starcoder2
+    - deepseek-coder

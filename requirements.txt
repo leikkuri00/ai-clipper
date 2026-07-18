@@ -1,0 +1,11 @@
+psutil
+rich
+numpy
+annoy
+pyyaml
+fastapi
+uvicorn[standard]
+sentence-transformers
+torch
+llama-cpp-python
+sentencepiece

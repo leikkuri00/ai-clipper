@@ -1,0 +1,31 @@
+# Core video processing
+ffmpeg-python>=0.2.0
+opencv-python>=4.9.0
+
+# Transcription
+faster-whisper>=1.0.3   # local Whisper (offline)
+requests>=2.31.0        # Groq Whisper API calls
+numpy>=1.24.0           # audio energy analysis
+soundfile>=0.12.1       # reading WAV for energy analysis
+# torch>=2.0.0          # optional: enables Silero VAD hallucination filtering
+
+# LLM for scoring (local via Ollama, LM Studio/Bionic, or cloud API)
+ollama>=0.3.0
+openai>=1.0.0           # OpenAI-compatible client (LM Studio/Bionic + OpenAI cloud)
+
+# Caption rendering & video composition
+moviepy>=2.0.0
+Pillow>=10.0.0
+
+# Utilities
+tqdm>=4.66.0
+pydantic>=2.0.0
+
+# Optional: scene detection
+scenedetect[opencv]>=0.6.3
+
+# Video downloading from URLs (YouTube, TikTok, etc.)
+yt-dlp>=2024.0.0
+
+# Web UI
+streamlit>=1.35.0

@@ -1,0 +1,37 @@
+AI Clipper Status Summary
+=========================
+
+Workspace:
+C:\Users\Eero\.lmstudio\apps\bionic\projects\f22bf9cd-50ce-456f-a3db-673611dcb745\workspace
+
+Current state:
+- Core app files compile:
+  - ai_clipper/config.py
+  - ai_clipper/scorer.py
+  - ai_clipper/downloader.py
+  - ai_clipper/web_app.py
+- Streamlit is installed: streamlit 1.59.2
+- Local LLM runtime installed: llama-cpp-python 0.3.34 and sentencepiece 0.2.2
+- Local llama-cpp import works (`from llama_cpp import Llama`)
+- yt-dlp Python module available, executable not on PATH but fallback `python -m yt_dlp` works
+- downloader metadata test succeeded for URL: https://www.youtube.com/watch?v=rTKu9wxEFFo
+- `ai_clipper/downloader.get_video_info()` returns valid metadata
+
+Remaining work to reach a working product:
+1. Provide a valid GGUF model path in the app or set `LLAMA_MODEL_PATH`.
+   - Detected candidate model files:
+     - C:\Users\Eero\.lmstudio\models\lmstudio-community\Qwen2.5-Coder-14B-Instruct-GGUF\Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf
+     - C:\Users\Eero\.lmstudio\apps\bionic\.internal\bundled-models\nomic-ai\nomic-embed-text-v1.5-GGUF\nomic-embed-text-v1.5.Q4_K_M.gguf
+2. Run the Streamlit UI and enter the local model path:
+   - py -3 -m streamlit run ai_clipper/web_app.py
+3. Ensure ffmpeg is installed for best video download and clipping output.
+4. Optionally install yt-dlp on PATH to avoid fallback warnings.
+
+Quick launch:
+cd "C:\Users\Eero\.lmstudio\apps\bionic\projects\f22bf9cd-50ce-456f-a3db-673611dcb745\workspace"
+py -3 -m streamlit run ai_clipper/web_app.py
+
+Sleep-ready conclusion:
+- You are close to a working product.
+- The main blocker is a valid local GGUF model path and then running the app.
+- The core Python pipeline is importable and the downloader works.
