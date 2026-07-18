@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -62,6 +63,7 @@ class AIClipper:
 
     def __init__(self, config: ClipperConfig | None = None):
         self.config = config or ClipperConfig()
+        self.config.apply_platform_preset()
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         self.clips_dir = self.config.output_dir / "clips"
         self.clips_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,7 @@ class AIClipper:
         self.story_builder = StorySeriesBuilder(
             scorer=self.scorer,
             episode_target_duration=self.config.episode_target_duration,
+            num_series=self.config.num_story_series,
         )
         self._scored_segments_cache: List[ScoredSegment] = []
 
@@ -117,13 +120,23 @@ class AIClipper:
 
         if is_url(src):
             try:
-                info = get_video_info(src)
+                info = get_video_info(
+                    src,
+                    cookies_from_browser=self.config.cookies_from_browser,
+                    cookiefile=self.config.cookiefile,
+                )
                 logger.info(f"Source: {info['title']} ({info['duration']}s) by {info['uploader']}")
             except Exception as e:
                 logger.warning(f"Could not fetch video info: {e}")
             download_dir = prepare_download_dir(f"aiclip_{uuid4().hex}")
             logger.info(f"Downloading video to E: drive: {download_dir}")
-            path = download_video(src, download_dir, max_resolution=self.config.max_resolution)
+            path = download_video(
+                src,
+                download_dir,
+                max_resolution=self.config.max_resolution,
+                cookies_from_browser=self.config.cookies_from_browser,
+                cookiefile=self.config.cookiefile,
+            )
             return path, download_dir
 
         path = Path(src)
@@ -204,16 +217,19 @@ class AIClipper:
                 top_k=max(100, self.config.num_clips * 15),
             )
 
-            # Step 10: Select 8 standalone clips with diversity
-            logger.info("Selecting 8 diverse standalone clips...")
-            standalone = self._select_standalone_clips(optimized)
+            # Step 10: Select standalone clips with diversity
+            standalone: List[OptimizedClip] = []
+            if not self.config.story_only:
+                logger.info(f"Selecting {self.config.num_clips} diverse standalone clips...")
+                standalone = self._select_standalone_clips(optimized)
 
             # Step 11: Build story series
             story_series: List[StorySeries] = []
-            if not self.config.skip_story_series and not self.config.story_only:
-                logger.info("Building 3 story series...")
+            if not self.config.skip_story_series:
+                logger.info(f"Building {self.config.num_story_series} story series...")
                 story_series = self.story_builder.build_series(
-                    semantic_segments, transcript.all_words
+                    semantic_segments, transcript.all_words,
+                    num_series=self.config.num_story_series,
                 )
 
             # Step 12: Moderate and cut clips
@@ -516,12 +532,13 @@ class AIClipper:
             output_path = self._make_output_path(
                 video_path, opt, f"standalone_{i:02d}", clip_index
             )
+            meta = self._optimized_to_meta(opt, "standalone", i, clip_index)
             clip = cut_and_caption_clip(
-                video_path, output_path, opt.start_time, opt.end_time, all_words, self.config
+                video_path, output_path, opt.start_time, opt.end_time, all_words,
+                self.config, hook_title=meta["title"],
             )
             output_clips.append(clip)
-            
-            meta = self._optimized_to_meta(opt, "standalone", i, clip_index)
+
             clip_meta.append(meta)
             self._write_hashtags_file(clip, meta["title"], meta["hashtags"])
             clip_index += 1
@@ -537,7 +554,8 @@ class AIClipper:
                     title=episode.title,
                 )
                 clip = cut_and_caption_clip(
-                    video_path, output_path, episode.start_time, episode.end_time, all_words, self.config
+                    video_path, output_path, episode.start_time, episode.end_time,
+                    all_words, self.config, hook_title=episode.title,
                 )
                 output_clips.append(clip)
                 

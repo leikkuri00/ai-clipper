@@ -76,6 +76,120 @@ def is_url(path: str) -> bool:
     return bool(re.match(r"^https?://", path))
 
 
+# Substrings that indicate the site (mainly YouTube) is asking for authentication.
+_AUTH_REQUIRED_MARKERS = (
+    "sign in to confirm",
+    "confirm you're not a bot",
+    "confirm you’re not a bot",
+    "use --cookies",
+    "this video is only available to",
+    "requires authentication",
+    "please sign in",
+)
+
+# Browsers tried in order when a download is blocked by a bot/login check and
+# no explicit cookies were supplied.
+_COOKIE_FALLBACK_BROWSERS = ("chrome", "edge", "firefox")
+
+
+def _needs_auth(text: str) -> bool:
+    low = (text or "").lower()
+    return any(marker in low for marker in _AUTH_REQUIRED_MARKERS)
+
+
+def _cookie_args(cookies_from_browser: str = "", cookiefile: str = "") -> list[str]:
+    """Build yt-dlp cookie flags from explicit args or environment fallbacks."""
+    cookies_from_browser = cookies_from_browser or os.environ.get(
+        "AICLIPPER_COOKIES_FROM_BROWSER", ""
+    )
+    cookiefile = cookiefile or os.environ.get("AICLIPPER_COOKIEFILE", "")
+    if cookiefile:
+        return ["--cookies", cookiefile]
+    if cookies_from_browser:
+        return ["--cookies-from-browser", cookies_from_browser]
+    return []
+
+
+def _run_ytdlp_with_cookies(
+    base_cmd: list[str],
+    cookies_from_browser: str = "",
+    cookiefile: str = "",
+) -> subprocess.CompletedProcess:
+    """
+    Run a yt-dlp command, adding cookie flags.
+
+    If no cookies are supplied and the site returns an authentication/bot check,
+    automatically retry using cookies from installed browsers. This lets the app
+    "just work" when the user is signed in to YouTube in their local browser.
+    """
+    explicit = _cookie_args(cookies_from_browser, cookiefile)
+
+    def _run(cmd):
+        logger.info("Running yt-dlp: %s", " ".join(cmd))
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    result = _run(base_cmd + explicit)
+    if result.returncode == 0 or explicit:
+        return result
+
+    if not _needs_auth(result.stderr):
+        return result
+
+    # Preserve the original (meaningful) auth error; only replace it if a
+    # browser-cookie retry actually succeeds.
+    for browser in _COOKIE_FALLBACK_BROWSERS:
+        logger.warning(
+            "Download blocked by an authentication/bot check; retrying with "
+            "cookies from %s.",
+            browser,
+        )
+        retry = _run(base_cmd + ["--cookies-from-browser", browser])
+        if retry.returncode == 0:
+            return retry
+    return result
+
+
+def _is_youtube(url: str) -> bool:
+    return bool(re.search(r"(?:youtube\.com|youtu\.be)", url or "", re.IGNORECASE))
+
+
+_REMOTE_COMPONENTS_SUPPORTED: Optional[bool] = None
+
+
+def _supports_remote_components() -> bool:
+    """Whether the installed yt-dlp understands --remote-components (cached)."""
+    global _REMOTE_COMPONENTS_SUPPORTED
+    if _REMOTE_COMPONENTS_SUPPORTED is None:
+        try:
+            help_text = subprocess.run(
+                _find_ytdlp_command() + ["--help"],
+                capture_output=True, text=True, timeout=30,
+            ).stdout
+            _REMOTE_COMPONENTS_SUPPORTED = "--remote-components" in help_text
+        except Exception:
+            _REMOTE_COMPONENTS_SUPPORTED = False
+    return _REMOTE_COMPONENTS_SUPPORTED
+
+
+def _youtube_extra_args(url: str) -> list[str]:
+    """
+    Extra yt-dlp args needed for modern YouTube downloads.
+
+    YouTube gates real formats behind a JavaScript "n"-signature challenge.
+    yt-dlp can solve it by fetching the EJS challenge solver, but that requires
+    a JS runtime (Deno or Node) on PATH. Only enabled when supported.
+    """
+    if not _is_youtube(url) or not _supports_remote_components():
+        return []
+    if not (shutil.which("deno") or shutil.which("node")):
+        logger.warning(
+            "No JavaScript runtime (deno/node) found; YouTube may only offer "
+            "low-quality or no formats. Install Deno or Node.js to fix this."
+        )
+        return []
+    return ["--remote-components", "ejs:github"]
+
+
 def _find_downloaded_file(output_dir: Path, before_files: set[Path], preferred_format: str) -> Path | None:
     """Find the newly created downloaded file in the output directory."""
     candidates = [
@@ -101,6 +215,8 @@ def download_video(
     output_dir: Path,
     preferred_format: str = "mp4",
     max_resolution: int = 1080,
+    cookies_from_browser: str = "",
+    cookiefile: str = "",
 ) -> Path:
     """
     Download a video from a URL using yt-dlp.
@@ -110,6 +226,8 @@ def download_video(
         output_dir: Directory to save the downloaded video
         preferred_format: Preferred container format
         max_resolution: Maximum video height (720, 1080, etc.)
+        cookies_from_browser: Browser name to read cookies from (e.g. "chrome").
+        cookiefile: Path to a Netscape-format cookies.txt file.
 
     Returns:
         Path to the downloaded video file
@@ -123,8 +241,7 @@ def download_video(
     output_template = str(output_dir / "%(title).100s_%(id)s.%(ext)s")
 
     def _run_ytdlp(command):
-        logger.info(f"Running yt-dlp: {' '.join(command)}")
-        return subprocess.run(command, capture_output=True, text=True)
+        return _run_ytdlp_with_cookies(command, cookies_from_browser, cookiefile)
 
     has_ffmpeg = shutil.which("ffmpeg") is not None
     if has_ffmpeg:
@@ -139,9 +256,11 @@ def download_video(
         "--format", format_spec,
         *merge_args,
         "--output", output_template,
-        "--print", "filename",
+        "--print", "after_move:filepath",
+        "--no-simulate",
         "--no-warnings",
         "--no-progress",
+        *_youtube_extra_args(url),
         url,
     ]
 
@@ -163,6 +282,14 @@ def download_video(
                 break
 
     if result.returncode != 0:
+        if _needs_auth(result.stderr):
+            raise RuntimeError(
+                "YouTube (or the source site) requires sign-in to download this "
+                "video (bot/anti-automation check). Sign in to the site in your "
+                "browser and set the cookies option (browser name or a "
+                "cookies.txt file), then try again.\n\n"
+                f"Details: {result.stderr[:500]}"
+            )
         raise RuntimeError(
             f"yt-dlp failed to download: {result.stderr[:500]}"
         )
@@ -219,7 +346,7 @@ def download_video(
     return downloaded_path
 
 
-def get_video_info(url: str) -> dict:
+def get_video_info(url: str, cookies_from_browser: str = "", cookiefile: str = "") -> dict:
     """
     Get video metadata without downloading.
 
@@ -228,10 +355,18 @@ def get_video_info(url: str) -> dict:
     cmd = _find_ytdlp_command() + [
         "--dump-json",
         "--no-playlist",
+        *_youtube_extra_args(url),
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = _run_ytdlp_with_cookies(cmd, cookies_from_browser, cookiefile)
     if result.returncode != 0:
+        if _needs_auth(result.stderr):
+            raise RuntimeError(
+                "YouTube (or the source site) requires sign-in to read this "
+                "video's info (bot/anti-automation check). Sign in to the site in "
+                "your browser and set the cookies option, then try again.\n\n"
+                f"Details: {result.stderr[:300]}"
+            )
         raise RuntimeError(
             f"yt-dlp info failed: {result.stderr[:300]}"
         )

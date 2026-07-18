@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import io
 import os
+import sys
 import tempfile
 import time
 import zipfile
@@ -17,6 +18,13 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 from uuid import uuid4
+
+# Ensure the repo root is importable when launched via `streamlit run
+# ai_clipper/web_app.py`, which puts the script's own directory (not the repo
+# root) on sys.path and would otherwise break `import ai_clipper`.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import streamlit as st
 
@@ -53,6 +61,9 @@ def _download_all_clips(clips: list[Path], key: str) -> None:
             hashtags = clip.with_suffix(".txt")
             if hashtags.exists():
                 zip_file.write(hashtags, arcname=hashtags.name)
+            thumb = clip.with_name(clip.stem + "_thumb.jpg")
+            if thumb.exists():
+                zip_file.write(thumb, arcname=thumb.name)
 
     st.download_button(
         "Download all clips (.zip)",
@@ -77,19 +88,55 @@ with st.sidebar:
 
     llm_provider = st.selectbox(
         "LLM provider",
-        ["local (llama-cpp)", "openai"],
+        ["LM Studio (local)", "Groq (free cloud)", "Ollama (local)", "local (llama-cpp)", "openai"],
         index=0,
-        help="Choose local llama-cpp or OpenAI provider.",
+        help="LM Studio runs locally free. Groq is a free cloud API (no card). Pick what you have.",
     )
 
-    if "local" in llm_provider:
+    lmstudio_api_base = "http://127.0.0.1:1234/v1"
+    groq_api_key = os.environ.get("GROQ_API_KEY", "")
+    cloud_model = ""
+    if "Groq" in llm_provider:
+        llm_provider_key = "groq"
+        llm_model = st.text_input(
+            "Groq model",
+            os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile"),
+            help="Free Groq model, e.g. llama-3.3-70b-versatile or llama-3.1-8b-instant.",
+        )
+        groq_api_key = st.text_input(
+            "Groq API key (free)",
+            os.environ.get("GROQ_API_KEY", ""),
+            type="password",
+            help="Get a free key at https://console.groq.com/keys (no credit card).",
+        )
+        if not groq_api_key:
+            st.caption("Get a free key at https://console.groq.com/keys — no card needed.")
+    elif "LM Studio" in llm_provider:
+        llm_provider_key = "lmstudio"
+        llm_model = st.text_input(
+            "LM Studio model",
+            os.environ.get("LMSTUDIO_MODEL", "local-model"),
+            help="Model name/identifier loaded in LM Studio (Developer tab).",
+        )
+        lmstudio_api_base = st.text_input(
+            "LM Studio server URL",
+            os.environ.get("LMSTUDIO_API_BASE", "http://127.0.0.1:1234/v1"),
+            help="Start LM Studio's local server (Developer → Start Server). No API key needed.",
+        )
+    elif "Ollama" in llm_provider:
+        llm_provider_key = "ollama"
+        llm_model = st.text_input(
+            "Ollama model",
+            os.environ.get("OLLAMA_MODEL", "llama3.1"),
+            help="Model pulled in Ollama, e.g. `ollama pull llama3.1`.",
+        )
+    elif "local" in llm_provider:
         llm_provider_key = "local"
         llm_model = st.text_input(
             "Local model path",
             os.environ.get("LLAMA_MODEL_PATH", "C:\\models\\orca-mini-3b.gguf"),
             help="Path to a local GGUF model file for llama-cpp-python.",
         )
-        cloud_model = ""
         st.caption("Local model path must point to a downloaded GGUF model.")
     else:
         llm_provider_key = "openai"
@@ -107,8 +154,11 @@ with st.sidebar:
 
     st.subheader("📖 Story Series")
     enable_story_series = st.checkbox("Generate story series", value=True)
-    num_story_series = st.slider("Number of story series", 0, 5, 3)
-    episode_duration = st.slider("Episode target duration (sec)", 60, 180, 120, 5)
+    num_story_series = st.slider(
+        "Number of story series", 0, 5, 1,
+        help="Each series = 3 chronological episodes that together tell one full story.",
+    )
+    episode_duration = st.slider("Episode target duration (sec)", 60, 240, 148, 5)
 
     st.divider()
 
@@ -125,14 +175,79 @@ with st.sidebar:
     )
     caption_position = "center" if "center" in caption_style else "bottom"
 
+    platform_preset_label = st.selectbox(
+        "Platform preset",
+        ["Custom", "TikTok", "Reels", "Shorts", "Square (1:1)", "YouTube (16:9)"],
+        index=0,
+        help="Sets the aspect ratio for the chosen platform. 'Custom' uses the toggle below.",
+    )
+    _preset_map = {
+        "Custom": "none", "TikTok": "tiktok", "Reels": "reels",
+        "Shorts": "shorts", "Square (1:1)": "square", "YouTube (16:9)": "youtube",
+    }
+    platform_preset = _preset_map[platform_preset_label]
+
     vertical_crop = st.checkbox(
         "Crop to 9:16 vertical (TikTok/Reels/Shorts)",
         value=True,
-        help="Crops horizontal video to vertical portrait format"
+        help="Crops horizontal video to vertical portrait format (ignored if a platform preset is set)."
     )
+
+    reframe_label = st.selectbox(
+        "Reframe",
+        ["Track speaker's face", "Center crop"],
+        index=0,
+        help="Face tracking keeps the active speaker in frame instead of a blind center crop.",
+    )
+    reframe_strategy = "tracked" if "face" in reframe_label else "center"
 
     max_resolution = st.selectbox(
         "Max resolution", [360, 480, 720, 1080], index=3
+    )
+
+    st.divider()
+    st.subheader("✨ Viral polish")
+    caption_emphasis = st.checkbox(
+        "Highlight high-impact words in captions", value=True
+    )
+    caption_emojis = st.checkbox(
+        "Add emojis to emotional captions", value=True
+    )
+    generate_thumbnail = st.checkbox(
+        "Generate a thumbnail per clip", value=True
+    )
+    trim_silence = st.checkbox(
+        "Trim dead air (hook-first, tighter pacing)", value=True
+    )
+    loudness_normalize = st.checkbox(
+        "Normalize loudness (consistent volume)", value=True
+    )
+    bgm_enabled = st.checkbox("Add background music bed", value=False)
+    bgm_path = ""
+    if bgm_enabled:
+        bgm_path = st.text_input(
+            "Music file path (.mp3/.wav)",
+            "",
+            help="Path to a music track. Looped and ducked under the speech.",
+        )
+
+    st.divider()
+    st.subheader("🔑 Download cookies")
+    st.caption(
+        "Needed for YouTube 'sign in to confirm you're not a bot' errors and "
+        "private/members-only videos."
+    )
+    cookies_from_browser = st.selectbox(
+        "Use cookies from browser",
+        ["(none)", "chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"],
+        index=0,
+        help="Reads cookies from a browser you're signed into. Requires that browser installed locally.",
+    )
+    cookies_from_browser = "" if cookies_from_browser == "(none)" else cookies_from_browser
+    cookiefile = st.text_input(
+        "Or cookies.txt path",
+        os.environ.get("AICLIPPER_COOKIEFILE", ""),
+        help="Path to an exported Netscape-format cookies.txt (takes priority over the browser option).",
     )
 
     st.divider()
@@ -151,6 +266,8 @@ def _build_config() -> ClipperConfig:
         llm_provider=llm_provider_key,
         llm_model=llm_model,
         cloud_model=cloud_model,
+        lmstudio_api_base=lmstudio_api_base,
+        groq_api_key=groq_api_key,
         num_clips=top_n,
         target_clip_duration=float(target_duration),
         clip_duration_tolerance=float(tolerance),
@@ -164,9 +281,21 @@ def _build_config() -> ClipperConfig:
         output_dir=Path("./output_clips"),
         caption_position=caption_position,
         target_aspect="9:16" if vertical_crop else "original",
+        platform_preset=platform_preset,
+        reframe_strategy=reframe_strategy,
+        use_person_tracking=(reframe_strategy == "tracked"),
+        caption_emphasis=caption_emphasis,
+        caption_emojis=caption_emojis,
+        generate_thumbnail=generate_thumbnail,
+        trim_silence=trim_silence,
+        loudness_normalize=loudness_normalize,
+        bgm_enabled=bgm_enabled,
+        bgm_path=Path(bgm_path) if bgm_path else None,
         generate_hashtags=generate_hashtags,
         max_hashtags=max_hashtags,
         max_resolution=max_resolution,
+        cookies_from_browser=cookies_from_browser,
+        cookiefile=cookiefile,
     )
 
 
@@ -272,9 +401,14 @@ def _process_url(url: str):
     """Download from URL and run pipeline."""
     progress = st.status("Processing...", expanded=True)
 
+    config = _build_config()
     try:
         progress.write("🔍 Fetching video info...")
-        info = get_video_info(url)
+        info = get_video_info(
+            url,
+            cookies_from_browser=config.cookies_from_browser,
+            cookiefile=config.cookiefile,
+        )
         st.info(
             f"**{info['title']}**  \n"
             f"⏱️ {info['duration'] // 60}m {info['duration'] % 60}s  ·  "
@@ -283,11 +417,16 @@ def _process_url(url: str):
 
         progress.write("⬇️ Downloading video to E: drive...")
         download_dir = prepare_download_dir(f"aiclip_{uuid4().hex}")
-        video_path = download_video(url, download_dir, max_resolution=max_resolution)
+        video_path = download_video(
+            url,
+            download_dir,
+            max_resolution=max_resolution,
+            cookies_from_browser=config.cookies_from_browser,
+            cookiefile=config.cookiefile,
+        )
         progress.write(f"✅ Downloaded: {video_path.name}")
 
         progress.write("🧠 Running Master Prompt AI engine...")
-        config = _build_config()
         config.output_dir.mkdir(parents=True, exist_ok=True)
 
         clipper = AIClipper(config)

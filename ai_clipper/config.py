@@ -30,10 +30,20 @@ class ClipperConfig:
     )
 
     # LLM scoring
-    llm_provider: Literal["local", "ollama", "openai", "router"] = "local"
+    llm_provider: Literal[
+        "local", "ollama", "openai", "lmstudio", "groq", "router"
+    ] = "local"
     llm_model: str = field(default_factory=lambda: os.environ.get("LLAMA_MODEL_PATH", ""))
     cloud_model: str = "gpt-4o-mini"
     cloud_api_base: str = "https://api.openai.com/v1"
+    # Groq's free OpenAI-compatible cloud endpoint (free API key, no card).
+    groq_api_base: str = "https://api.groq.com/openai/v1"
+    # LM Studio's local OpenAI-compatible server (no API key required).
+    lmstudio_api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "LMSTUDIO_API_BASE", "http://127.0.0.1:1234/v1"
+        )
+    )
 
     # LLM router script path (PowerShell multi-provider router)
     llm_router_script: str = "llm-router.ps1"
@@ -59,9 +69,11 @@ class ClipperConfig:
     iterative_rounds: int = 3                    # optimization refinement rounds
 
     # ── Master Prompt: Output B - Story Series ────────────
-    num_story_series: int = 3                    # 3 story series
-    episodes_per_series: int = 3                 # 3 episodes each
-    episode_target_duration: float = 120.0       # ~2 min per episode
+    # One continuous 3-episode series that tells the full most-viral story,
+    # each episode picking up chronologically where the previous ended.
+    num_story_series: int = 1                     # best complete story arc
+    episodes_per_series: int = 3                  # 3 chronological episodes
+    episode_target_duration: float = 148.0        # 2 min 28 sec per episode
 
     # ── Segment / chunking ─────────────────────────────────
     chunk_duration_sec: float = 1200.0  # ~20 min chunks for LLM
@@ -100,6 +112,8 @@ class ClipperConfig:
     caption_position: Literal["center", "bottom"] = "center"
     caption_font: str = "Arial"
     caption_highlight_color: str = "#FFD700"  # gold karaoke highlight
+    caption_emphasis: bool = True             # color-highlight high-impact words
+    caption_emojis: bool = True               # append an emoji per emotional line
 
     # ── Hook title ────────────────────────────────────────
     show_hook_title: bool = True
@@ -120,6 +134,14 @@ class ClipperConfig:
     bgm_enabled: bool = False
     bgm_path: Path | None = None
     bgm_volume: float = 0.15  # relative to speech
+
+    # ── Platform preset ───────────────────────────────────
+    # Convenience preset that sets aspect ratio for a target platform.
+    # Applied by apply_platform_preset(); "none" keeps explicit settings.
+    platform_preset: Literal["none", "tiktok", "reels", "shorts", "square", "youtube"] = "none"
+
+    # ── Thumbnails ────────────────────────────────────────
+    generate_thumbnail: bool = True
 
     # ── Output ─────────────────────────────────────────────
     output_dir: Path = field(default_factory=lambda: Path("./output"))
@@ -145,6 +167,14 @@ class ClipperConfig:
 
     # ── Download ───────────────────────────────────────────
     max_resolution: int = 1080
+    # Cookies for sites that require sign-in (e.g. YouTube bot checks).
+    # Either a browser name to read cookies from, or a cookies.txt path.
+    cookies_from_browser: str = field(
+        default_factory=lambda: os.environ.get("AICLIPPER_COOKIES_FROM_BROWSER", "")
+    )
+    cookiefile: str = field(
+        default_factory=lambda: os.environ.get("AICLIPPER_COOKIEFILE", "")
+    )
 
     # ── Cost control ───────────────────────────────────────
     groq_daily_limit: int = 1800  # below 2000 to leave margin
@@ -175,6 +205,20 @@ class ClipperConfig:
 
     def is_vertical(self) -> bool:
         return self.target_aspect in ("9:16", "4:5")
+
+    def apply_platform_preset(self) -> "ClipperConfig":
+        """Apply the selected platform preset's aspect ratio in place, then return self."""
+        preset_aspect = {
+            "tiktok": "9:16",
+            "reels": "9:16",
+            "shorts": "9:16",
+            "square": "1:1",
+            "youtube": "original",
+        }
+        aspect = preset_aspect.get(self.platform_preset)
+        if aspect:
+            self.target_aspect = aspect  # type: ignore[assignment]
+        return self
 
     def video_output_size(self) -> tuple[int, int]:
         """Return (width, height) for the output video."""

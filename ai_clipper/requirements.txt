@@ -12,6 +12,7 @@ soundfile>=0.12.1       # reading WAV for energy analysis
 # LLM for scoring (local via Ollama, LM Studio/Bionic, or cloud API)
 ollama>=0.3.0
 openai>=1.0.0           # OpenAI-compatible client (LM Studio/Bionic + OpenAI cloud)
+# llama-cpp-python>=0.2.0  # optional: enables the local "llama-cpp" scoring provider (also needs sentencepiece)
 
 # Caption rendering & video composition
 moviepy>=2.0.0
