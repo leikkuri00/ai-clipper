@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from typing import List, Optional, Literal, Callable
@@ -275,9 +276,12 @@ class ViralScorer:
     ) -> str:
         from openai import OpenAI
         url = base_url or self.config.cloud_api_base
-        client = OpenAI(base_url=url)
+        # Local OpenAI-compatible servers (LM Studio, Ollama, etc.) don't need a
+        # real key, but the OpenAI client requires one to be set.
+        api_key = os.environ.get("OPENAI_API_KEY") or "not-needed"
+        client = OpenAI(base_url=url, api_key=api_key)
         response = client.chat.completions.create(
-            model=self.model if not base_url else self.model,
+            model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=2048,
@@ -346,6 +350,15 @@ class ViralScorer:
                 return self._get_ollama_response(prompt)
         except Exception as e:
             logger.warning(f"Ollama failed: {e}")
+
+        if self.provider == "lmstudio":
+            try:
+                return self._get_openai_compatible_response(
+                    prompt, base_url=self.config.lmstudio_api_base
+                )
+            except Exception as e:
+                logger.error(f"LM Studio failed: {e}")
+                raise RuntimeError(f"LLM call failed: {e}")
 
         if self.provider == "openai":
             try:

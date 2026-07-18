@@ -85,19 +85,39 @@ with st.sidebar:
 
     llm_provider = st.selectbox(
         "LLM provider",
-        ["local (llama-cpp)", "openai"],
+        ["LM Studio (local)", "Ollama (local)", "local (llama-cpp)", "openai"],
         index=0,
-        help="Choose local llama-cpp or OpenAI provider.",
+        help="LM Studio / Ollama run locally with no API key. Pick the one you have running.",
     )
 
-    if "local" in llm_provider:
+    lmstudio_api_base = "http://127.0.0.1:1234/v1"
+    cloud_model = ""
+    if "LM Studio" in llm_provider:
+        llm_provider_key = "lmstudio"
+        llm_model = st.text_input(
+            "LM Studio model",
+            os.environ.get("LMSTUDIO_MODEL", "local-model"),
+            help="Model name/identifier loaded in LM Studio (Developer tab).",
+        )
+        lmstudio_api_base = st.text_input(
+            "LM Studio server URL",
+            os.environ.get("LMSTUDIO_API_BASE", "http://127.0.0.1:1234/v1"),
+            help="Start LM Studio's local server (Developer → Start Server). No API key needed.",
+        )
+    elif "Ollama" in llm_provider:
+        llm_provider_key = "ollama"
+        llm_model = st.text_input(
+            "Ollama model",
+            os.environ.get("OLLAMA_MODEL", "llama3.1"),
+            help="Model pulled in Ollama, e.g. `ollama pull llama3.1`.",
+        )
+    elif "local" in llm_provider:
         llm_provider_key = "local"
         llm_model = st.text_input(
             "Local model path",
             os.environ.get("LLAMA_MODEL_PATH", "C:\\models\\orca-mini-3b.gguf"),
             help="Path to a local GGUF model file for llama-cpp-python.",
         )
-        cloud_model = ""
         st.caption("Local model path must point to a downloaded GGUF model.")
     else:
         llm_provider_key = "openai"
@@ -181,6 +201,7 @@ def _build_config() -> ClipperConfig:
         llm_provider=llm_provider_key,
         llm_model=llm_model,
         cloud_model=cloud_model,
+        lmstudio_api_base=lmstudio_api_base,
         num_clips=top_n,
         target_clip_duration=float(target_duration),
         clip_duration_tolerance=float(tolerance),

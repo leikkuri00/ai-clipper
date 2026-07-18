@@ -30,10 +30,16 @@ class ClipperConfig:
     )
 
     # LLM scoring
-    llm_provider: Literal["local", "ollama", "openai", "router"] = "local"
+    llm_provider: Literal["local", "ollama", "openai", "lmstudio", "router"] = "local"
     llm_model: str = field(default_factory=lambda: os.environ.get("LLAMA_MODEL_PATH", ""))
     cloud_model: str = "gpt-4o-mini"
     cloud_api_base: str = "https://api.openai.com/v1"
+    # LM Studio's local OpenAI-compatible server (no API key required).
+    lmstudio_api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "LMSTUDIO_API_BASE", "http://127.0.0.1:1234/v1"
+        )
+    )
 
     # LLM router script path (PowerShell multi-provider router)
     llm_router_script: str = "llm-router.ps1"
