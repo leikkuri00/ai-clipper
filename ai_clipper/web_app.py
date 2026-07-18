@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import io
 import os
+import sys
 import tempfile
 import time
 import zipfile
@@ -17,6 +18,13 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 from uuid import uuid4
+
+# Ensure the repo root is importable when launched via `streamlit run
+# ai_clipper/web_app.py`, which puts the script's own directory (not the repo
+# root) on sys.path and would otherwise break `import ai_clipper`.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import streamlit as st
 

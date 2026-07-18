@@ -5,11 +5,11 @@ title AI Clipper
 
 py -3 -m streamlit --version >nul 2>&1
 if errorlevel 1 (
-    echo Installing the web interface for the first time...
-    py -3 -m pip install streamlit
+    echo Installing dependencies for the first time...
+    py -3 -m pip install -r "%~dp0ai_clipper\requirements.txt"
     if errorlevel 1 (
         echo.
-        echo Could not install Streamlit. Check your internet connection and try again.
+        echo Could not install dependencies. Check your internet connection and try again.
         pause
         exit /b 1
     )
