@@ -74,6 +74,20 @@ if errorlevel 1 (
     echo [OK] FFmpeg found.
 )
 
+REM --- 4b. Check Deno (YouTube JS challenge solver) ------------------
+where deno >nul 2>&1
+if errorlevel 1 (
+    echo [..] Deno not found ^(needed for reliable YouTube downloads^). Installing via winget...
+    winget install --id DenoLand.Deno -e --accept-source-agreements --accept-package-agreements
+    where deno >nul 2>&1
+    if errorlevel 1 (
+        echo [!] Deno still not detected. YouTube may offer fewer formats until it is installed.
+        echo     Install from https://deno.com/  then re-run. Continuing anyway...
+    )
+) else (
+    echo [OK] Deno found.
+)
+
 REM --- 5. Launch the app --------------------------------------------
 echo(
 echo [OK] Starting AI Clipper in your browser...

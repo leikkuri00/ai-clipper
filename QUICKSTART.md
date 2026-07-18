@@ -14,8 +14,10 @@ chronological story series.
 3. Paste a YouTube URL (or upload a file), pick your options, click **Run**.
 
 > Requirements the launcher checks for you: **Python 3.10+** (install from
-> https://www.python.org/downloads/ and tick *Add Python to PATH*) and
-> **FFmpeg** (auto-installed via winget when possible).
+> https://www.python.org/downloads/ and tick *Add Python to PATH*),
+> **FFmpeg**, and **Deno** (both auto-installed via winget when possible).
+> Deno is what lets yt-dlp solve YouTube's JavaScript challenge for full-quality
+> formats.
 
 ## Local LLM (no API key needed)
 
