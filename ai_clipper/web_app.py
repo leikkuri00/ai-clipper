@@ -144,6 +144,25 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("🔑 Download cookies")
+    st.caption(
+        "Needed for YouTube 'sign in to confirm you're not a bot' errors and "
+        "private/members-only videos."
+    )
+    cookies_from_browser = st.selectbox(
+        "Use cookies from browser",
+        ["(none)", "chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"],
+        index=0,
+        help="Reads cookies from a browser you're signed into. Requires that browser installed locally.",
+    )
+    cookies_from_browser = "" if cookies_from_browser == "(none)" else cookies_from_browser
+    cookiefile = st.text_input(
+        "Or cookies.txt path",
+        os.environ.get("AICLIPPER_COOKIEFILE", ""),
+        help="Path to an exported Netscape-format cookies.txt (takes priority over the browser option).",
+    )
+
+    st.divider()
     st.subheader("🏷️ Hashtags")
     generate_hashtags = st.checkbox(
         "Generate AI hashtags", value=True,
@@ -175,6 +194,8 @@ def _build_config() -> ClipperConfig:
         generate_hashtags=generate_hashtags,
         max_hashtags=max_hashtags,
         max_resolution=max_resolution,
+        cookies_from_browser=cookies_from_browser,
+        cookiefile=cookiefile,
     )
 
 
@@ -280,9 +301,14 @@ def _process_url(url: str):
     """Download from URL and run pipeline."""
     progress = st.status("Processing...", expanded=True)
 
+    config = _build_config()
     try:
         progress.write("🔍 Fetching video info...")
-        info = get_video_info(url)
+        info = get_video_info(
+            url,
+            cookies_from_browser=config.cookies_from_browser,
+            cookiefile=config.cookiefile,
+        )
         st.info(
             f"**{info['title']}**  \n"
             f"⏱️ {info['duration'] // 60}m {info['duration'] % 60}s  ·  "
@@ -291,11 +317,16 @@ def _process_url(url: str):
 
         progress.write("⬇️ Downloading video to E: drive...")
         download_dir = prepare_download_dir(f"aiclip_{uuid4().hex}")
-        video_path = download_video(url, download_dir, max_resolution=max_resolution)
+        video_path = download_video(
+            url,
+            download_dir,
+            max_resolution=max_resolution,
+            cookies_from_browser=config.cookies_from_browser,
+            cookiefile=config.cookiefile,
+        )
         progress.write(f"✅ Downloaded: {video_path.name}")
 
         progress.write("🧠 Running Master Prompt AI engine...")
-        config = _build_config()
         config.output_dir.mkdir(parents=True, exist_ok=True)
 
         clipper = AIClipper(config)

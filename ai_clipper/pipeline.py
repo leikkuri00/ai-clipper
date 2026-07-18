@@ -117,13 +117,23 @@ class AIClipper:
 
         if is_url(src):
             try:
-                info = get_video_info(src)
+                info = get_video_info(
+                    src,
+                    cookies_from_browser=self.config.cookies_from_browser,
+                    cookiefile=self.config.cookiefile,
+                )
                 logger.info(f"Source: {info['title']} ({info['duration']}s) by {info['uploader']}")
             except Exception as e:
                 logger.warning(f"Could not fetch video info: {e}")
             download_dir = prepare_download_dir(f"aiclip_{uuid4().hex}")
             logger.info(f"Downloading video to E: drive: {download_dir}")
-            path = download_video(src, download_dir, max_resolution=self.config.max_resolution)
+            path = download_video(
+                src,
+                download_dir,
+                max_resolution=self.config.max_resolution,
+                cookies_from_browser=self.config.cookies_from_browser,
+                cookiefile=self.config.cookiefile,
+            )
             return path, download_dir
 
         path = Path(src)

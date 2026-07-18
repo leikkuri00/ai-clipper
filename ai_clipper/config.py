@@ -145,6 +145,14 @@ class ClipperConfig:
 
     # ── Download ───────────────────────────────────────────
     max_resolution: int = 1080
+    # Cookies for sites that require sign-in (e.g. YouTube bot checks).
+    # Either a browser name to read cookies from, or a cookies.txt path.
+    cookies_from_browser: str = field(
+        default_factory=lambda: os.environ.get("AICLIPPER_COOKIES_FROM_BROWSER", "")
+    )
+    cookiefile: str = field(
+        default_factory=lambda: os.environ.get("AICLIPPER_COOKIEFILE", "")
+    )
 
     # ── Cost control ───────────────────────────────────────
     groq_daily_limit: int = 1800  # below 2000 to leave margin
