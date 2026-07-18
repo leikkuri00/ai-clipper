@@ -332,6 +332,10 @@ def transcribe_audio(
     if offline_mode:
         provider = "local"
 
+    # Whisper expects None (not "auto"/"") for language auto-detection.
+    if language in (None, "", "auto"):
+        language = None
+
     # ── Transcribe ─────────────────────────────────────────
     if provider == "groq":
         try:
