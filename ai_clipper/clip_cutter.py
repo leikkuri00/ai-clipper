@@ -104,8 +104,9 @@ def create_ass_subtitle_file(
         line_text = " ".join(current_line)
         line_text = line_text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
 
-        start_ass = _format_ass_time(max(0, (current_start or 0) - shift_start))
-        end_ass = _format_ass_time(max(0, (current_end or 0) - shift_start))
+        # current_start/current_end are already clip-relative (shifted below).
+        start_ass = _format_ass_time(max(0, current_start or 0))
+        end_ass = _format_ass_time(max(0, current_end or 0))
 
         current_line.clear()
         current_start = None
