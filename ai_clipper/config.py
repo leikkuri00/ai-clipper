@@ -108,6 +108,8 @@ class ClipperConfig:
     caption_position: Literal["center", "bottom"] = "center"
     caption_font: str = "Arial"
     caption_highlight_color: str = "#FFD700"  # gold karaoke highlight
+    caption_emphasis: bool = True             # color-highlight high-impact words
+    caption_emojis: bool = True               # append an emoji per emotional line
 
     # ── Hook title ────────────────────────────────────────
     show_hook_title: bool = True
@@ -128,6 +130,14 @@ class ClipperConfig:
     bgm_enabled: bool = False
     bgm_path: Path | None = None
     bgm_volume: float = 0.15  # relative to speech
+
+    # ── Platform preset ───────────────────────────────────
+    # Convenience preset that sets aspect ratio for a target platform.
+    # Applied by apply_platform_preset(); "none" keeps explicit settings.
+    platform_preset: Literal["none", "tiktok", "reels", "shorts", "square", "youtube"] = "none"
+
+    # ── Thumbnails ────────────────────────────────────────
+    generate_thumbnail: bool = True
 
     # ── Output ─────────────────────────────────────────────
     output_dir: Path = field(default_factory=lambda: Path("./output"))
@@ -191,6 +201,20 @@ class ClipperConfig:
 
     def is_vertical(self) -> bool:
         return self.target_aspect in ("9:16", "4:5")
+
+    def apply_platform_preset(self) -> "ClipperConfig":
+        """Apply the selected platform preset's aspect ratio in place, then return self."""
+        preset_aspect = {
+            "tiktok": "9:16",
+            "reels": "9:16",
+            "shorts": "9:16",
+            "square": "1:1",
+            "youtube": "original",
+        }
+        aspect = preset_aspect.get(self.platform_preset)
+        if aspect:
+            self.target_aspect = aspect  # type: ignore[assignment]
+        return self
 
     def video_output_size(self) -> tuple[int, int]:
         """Return (width, height) for the output video."""

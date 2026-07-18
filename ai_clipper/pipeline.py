@@ -63,6 +63,7 @@ class AIClipper:
 
     def __init__(self, config: ClipperConfig | None = None):
         self.config = config or ClipperConfig()
+        self.config.apply_platform_preset()
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         self.clips_dir = self.config.output_dir / "clips"
         self.clips_dir.mkdir(parents=True, exist_ok=True)

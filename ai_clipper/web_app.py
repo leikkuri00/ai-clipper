@@ -61,6 +61,9 @@ def _download_all_clips(clips: list[Path], key: str) -> None:
             hashtags = clip.with_suffix(".txt")
             if hashtags.exists():
                 zip_file.write(hashtags, arcname=hashtags.name)
+            thumb = clip.with_name(clip.stem + "_thumb.jpg")
+            if thumb.exists():
+                zip_file.write(thumb, arcname=thumb.name)
 
     st.download_button(
         "Download all clips (.zip)",
@@ -156,15 +159,61 @@ with st.sidebar:
     )
     caption_position = "center" if "center" in caption_style else "bottom"
 
+    platform_preset_label = st.selectbox(
+        "Platform preset",
+        ["Custom", "TikTok", "Reels", "Shorts", "Square (1:1)", "YouTube (16:9)"],
+        index=0,
+        help="Sets the aspect ratio for the chosen platform. 'Custom' uses the toggle below.",
+    )
+    _preset_map = {
+        "Custom": "none", "TikTok": "tiktok", "Reels": "reels",
+        "Shorts": "shorts", "Square (1:1)": "square", "YouTube (16:9)": "youtube",
+    }
+    platform_preset = _preset_map[platform_preset_label]
+
     vertical_crop = st.checkbox(
         "Crop to 9:16 vertical (TikTok/Reels/Shorts)",
         value=True,
-        help="Crops horizontal video to vertical portrait format"
+        help="Crops horizontal video to vertical portrait format (ignored if a platform preset is set)."
     )
+
+    reframe_label = st.selectbox(
+        "Reframe",
+        ["Track speaker's face", "Center crop"],
+        index=0,
+        help="Face tracking keeps the active speaker in frame instead of a blind center crop.",
+    )
+    reframe_strategy = "tracked" if "face" in reframe_label else "center"
 
     max_resolution = st.selectbox(
         "Max resolution", [360, 480, 720, 1080], index=3
     )
+
+    st.divider()
+    st.subheader("✨ Viral polish")
+    caption_emphasis = st.checkbox(
+        "Highlight high-impact words in captions", value=True
+    )
+    caption_emojis = st.checkbox(
+        "Add emojis to emotional captions", value=True
+    )
+    generate_thumbnail = st.checkbox(
+        "Generate a thumbnail per clip", value=True
+    )
+    trim_silence = st.checkbox(
+        "Trim dead air (hook-first, tighter pacing)", value=True
+    )
+    loudness_normalize = st.checkbox(
+        "Normalize loudness (consistent volume)", value=True
+    )
+    bgm_enabled = st.checkbox("Add background music bed", value=False)
+    bgm_path = ""
+    if bgm_enabled:
+        bgm_path = st.text_input(
+            "Music file path (.mp3/.wav)",
+            "",
+            help="Path to a music track. Looped and ducked under the speech.",
+        )
 
     st.divider()
     st.subheader("🔑 Download cookies")
@@ -215,6 +264,16 @@ def _build_config() -> ClipperConfig:
         output_dir=Path("./output_clips"),
         caption_position=caption_position,
         target_aspect="9:16" if vertical_crop else "original",
+        platform_preset=platform_preset,
+        reframe_strategy=reframe_strategy,
+        use_person_tracking=(reframe_strategy == "tracked"),
+        caption_emphasis=caption_emphasis,
+        caption_emojis=caption_emojis,
+        generate_thumbnail=generate_thumbnail,
+        trim_silence=trim_silence,
+        loudness_normalize=loudness_normalize,
+        bgm_enabled=bgm_enabled,
+        bgm_path=Path(bgm_path) if bgm_path else None,
         generate_hashtags=generate_hashtags,
         max_hashtags=max_hashtags,
         max_resolution=max_resolution,

@@ -13,8 +13,46 @@ from pathlib import Path
 from typing import List, Optional
 
 from .config import ClipperConfig
+from .reframe import compute_subject_center_x
 
 logger = logging.getLogger(__name__)
+
+
+# High-impact words worth emphasizing in captions, and emotion → emoji hints.
+_EMPHASIS_WORDS = {
+    "never", "always", "everyone", "nobody", "everything", "nothing",
+    "secret", "crazy", "insane", "unbelievable", "shocking", "wild",
+    "money", "million", "millions", "billion", "billions", "dollars",
+    "free", "first", "best", "worst", "biggest", "huge", "massive",
+    "died", "dead", "kill", "killed", "win", "won", "lost", "lose",
+    "love", "hate", "amazing", "incredible", "impossible", "record",
+}
+_EMOJI_RULES = [
+    (("money", "million", "billion", "dollars", "cash", "rich", "profit"), "💰"),
+    (("crazy", "insane", "unbelievable", "shocking", "wild", "mind"), "🤯"),
+    (("funny", "laugh", "hilarious", "joke", "haha"), "😂"),
+    (("love", "heart", "beautiful", "amazing"), "❤️"),
+    (("fire", "best", "incredible", "awesome", "epic"), "🔥"),
+    (("died", "dead", "kill", "killed", "scary", "fear"), "😱"),
+    (("win", "won", "record", "champion", "first"), "🏆"),
+]
+
+
+def _hex_to_ass_color(hex_color: str) -> str:
+    """Convert #RRGGBB to ASS &H00BBGGRR& inline color override."""
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return "&H0000D7FF&"  # gold fallback
+    rr, gg, bb = h[0:2], h[2:4], h[4:6]
+    return f"&H00{bb}{gg}{rr}&".upper()
+
+
+def _emoji_for_line(raw_text: str) -> str:
+    low = raw_text.lower()
+    for keywords, emoji in _EMOJI_RULES:
+        if any(k in low for k in keywords):
+            return emoji
+    return ""
 
 
 def extract_audio(video_path: Path, output_path: Optional[Path] = None) -> Path:
@@ -116,12 +154,26 @@ def create_ass_subtitle_file(
     current_start: Optional[float] = None
     current_end: Optional[float] = None
 
+    highlight = _hex_to_ass_color(config.caption_highlight_color)
+
+    def _decorate(word: str) -> str:
+        esc = word.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+        if config.caption_emphasis:
+            bare = "".join(c for c in word.lower() if c.isalnum())
+            if bare in _EMPHASIS_WORDS:
+                return f"{{\\c{highlight}}}{esc}{{\\c&H00FFFFFF&}}"
+        return esc
+
     def flush_line():
         nonlocal current_line, current_start, current_end
         if not current_line:
             return ""
-        line_text = " ".join(current_line)
-        line_text = line_text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+        raw_text = " ".join(current_line)
+        line_text = " ".join(_decorate(w) for w in current_line)
+        if config.caption_emojis:
+            emoji = _emoji_for_line(raw_text)
+            if emoji:
+                line_text = f"{line_text} {emoji}"
 
         # current_start/current_end are already clip-relative (shifted below).
         start_ass = _format_ass_time(max(0, current_start or 0))
@@ -168,31 +220,55 @@ def _format_ass_time(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
 
 
+def _crop_filter(config: ClipperConfig, center_x: Optional[float] = None) -> str:
+    """
+    Build the crop expression for vertical output. When ``center_x`` (a 0..1
+    fraction of the source width, e.g. the tracked speaker's face) is given, the
+    crop window is centered on it and clamped to the frame; otherwise a plain
+    center crop is used.
+    """
+    crop_w = f"ih*{config.crop_aspect_w}/{config.crop_aspect_h}"
+    if center_x is None:
+        x_expr = "(iw-ow)/2"
+    else:
+        cx = min(0.95, max(0.05, center_x))
+        # Center the crop window on the subject, clamped to [0, iw-ow].
+        x_expr = f"min(max(iw*{cx:.4f}-ow/2\\,0)\\,iw-ow)"
+    return f"crop={crop_w}:ih:{x_expr}:0"
+
+
 def _build_ffmpeg_filter(
     ass_path_str: str,
     config: ClipperConfig,
+    center_x: Optional[float] = None,
 ) -> str:
     """
     Build the FFmpeg video filter chain.
-    Handles subtitle burning and optional 9:16 vertical cropping.
+    Handles subtitle burning and optional 9:16 vertical cropping (optionally
+    reframed onto a tracked subject).
     """
     filters = []
 
     if config.vertical_crop:
-        # Crop horizontal (16:9) to vertical (9:16) — center crop
-        # e.g. 1920x1080 source → crop 608x1080 center → scale to 1080x1920
-        crop_w = f"ih*{config.crop_aspect_w}/{config.crop_aspect_h}"
-        filters.append(f"crop={crop_w}:ih:(iw-ow)/2:0")
+        filters.append(_crop_filter(config, center_x))
         filters.append(f"scale={config.vertical_width}:{config.vertical_height}")
         logger.info(
             f"Vertical crop: {config.crop_aspect_w}:{config.crop_aspect_h} "
             f"→ {config.vertical_width}x{config.vertical_height}"
+            + (f" (reframed x={center_x:.2f})" if center_x is not None else " (center)")
         )
 
     # Burn subtitles on top
     filters.append(f"ass={ass_path_str}")
 
     return ",".join(filters)
+
+
+def _audio_filter(config: ClipperConfig) -> str:
+    """Loudness-normalize speech to the target LUFS for platform-consistent volume."""
+    if config.loudness_normalize:
+        return f"loudnorm=I={config.target_lufts:.1f}:TP=-1.5:LRA=11"
+    return ""
 
 
 def cut_and_caption_clip(
@@ -211,13 +287,21 @@ def cut_and_caption_clip(
     """
     clip_start = max(0, start_time - extra_padding)
     clip_end = end_time + extra_padding
-    duration = clip_end - clip_start
 
     # Filter words that fall within the clip
     clip_words = [
         w for w in words
         if w.end > clip_start and w.start < clip_end
     ]
+
+    # Trim leading/trailing dead air so the clip opens on speech (hook-first).
+    if config.trim_silence and clip_words:
+        first_w = min(w.start for w in clip_words)
+        last_w = max(w.end for w in clip_words)
+        clip_start = max(clip_start, first_w - 0.15)
+        clip_end = min(clip_end, last_w + 0.30)
+
+    duration = clip_end - clip_start
 
     if not clip_words:
         logger.warning(f"No words in clip range {clip_start:.1f}-{clip_end:.1f}")
@@ -229,22 +313,52 @@ def cut_and_caption_clip(
         clip_words, ass_path, config, shift_start=clip_start, hook_title=hook_title
     )
 
+    # Active-speaker reframe: find the subject so the vertical crop follows them.
+    center_x: Optional[float] = None
+    if (
+        config.vertical_crop
+        and config.use_person_tracking
+        and config.reframe_strategy in ("tracked", "smart")
+    ):
+        center_x = compute_subject_center_x(video_path, clip_start, duration)
+
     # Build filter chain (crop + subtitles)
     ass_path_str = str(ass_path).replace("\\", "/").replace(":", "\\\\:")
-    filter_chain = _build_ffmpeg_filter(ass_path_str, config)
+    filter_chain = _build_ffmpeg_filter(ass_path_str, config, center_x)
+    af = _audio_filter(config)
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(clip_start),
-        "-i", str(video_path),
-        "-t", str(duration),
-        "-vf", filter_chain,
-        "-c:v", "libx264",
-        "-c:a", "aac",
-        "-preset", "fast",
-        "-crf", "23",
-        str(output_path),
-    ]
+    use_bgm = bool(
+        config.bgm_enabled and config.bgm_path and Path(config.bgm_path).exists()
+    )
+
+    if use_bgm:
+        speech_chain = af or "anull"
+        filter_complex = (
+            f"[0:v]{filter_chain}[v];"
+            f"[0:a]{speech_chain}[sp];"
+            f"[1:a]volume={config.bgm_volume}[bg];"
+            f"[sp][bg]amix=inputs=2:duration=first:dropout_transition=0[a]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(clip_start), "-i", str(video_path), "-t", str(duration),
+            "-stream_loop", "-1", "-i", str(config.bgm_path),
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-c:a", "aac",
+            "-preset", "fast", "-crf", "23", "-shortest",
+            str(output_path),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(clip_start), "-i", str(video_path), "-t", str(duration),
+            "-vf", filter_chain,
+            *(["-af", af] if af else []),
+            "-c:v", "libx264", "-c:a", "aac",
+            "-preset", "fast", "-crf", "23",
+            str(output_path),
+        ]
 
     logger.info(f"Cutting clip: {clip_start:.1f}s - {clip_end:.1f}s → {output_path}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -254,7 +368,111 @@ def cut_and_caption_clip(
         logger.info("Retrying without subtitles...")
         return _cut_simple(video_path, output_path, clip_start, duration, config)
 
+    if config.generate_thumbnail:
+        try:
+            thumb_path = output_path.with_name(output_path.stem + "_thumb.jpg")
+            thumb_time = clip_start + min(1.5, duration / 2.0)
+            generate_thumbnail(
+                video_path, thumb_path, thumb_time, hook_title, config, center_x
+            )
+        except Exception as e:  # noqa: BLE001 - thumbnails must never fail the clip
+            logger.warning(f"Thumbnail generation failed: {e}")
+
     return output_path
+
+
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/Arial.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+]
+
+
+def _load_font(size: int):
+    from PIL import ImageFont
+
+    for path in _FONT_CANDIDATES:
+        if Path(path).exists():
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:  # noqa: BLE001 - fall through to next candidate
+                continue
+    return ImageFont.load_default()
+
+
+def generate_thumbnail(
+    source_video: Path,
+    thumb_path: Path,
+    at_seconds: float,
+    title: str,
+    config: ClipperConfig,
+    center_x: Optional[float] = None,
+) -> Optional[Path]:
+    """
+    Extract a clean (un-captioned) frame from the *source* video, reframe it to
+    the target aspect, and overlay a bold outlined title to produce a
+    click-worthy thumbnail. Uses the source so it never double-prints captions.
+    """
+    from PIL import Image, ImageDraw
+
+    frame_path = thumb_path.with_name(thumb_path.stem + "_frame.png")
+
+    vf_args: List[str] = []
+    if config.vertical_crop:
+        vf = f"{_crop_filter(config, center_x)},scale={config.vertical_width}:{config.vertical_height}"
+        vf_args = ["-vf", vf]
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-ss", str(at_seconds), "-i", str(source_video),
+            *vf_args, "-frames:v", "1", str(frame_path),
+        ],
+        check=True, capture_output=True,
+    )
+
+    img = Image.open(frame_path).convert("RGB")
+    w, h = img.size
+    draw = ImageDraw.Draw(img)
+
+    text = (title or "").strip().upper()
+    if text:
+        font = _load_font(max(28, int(w / 12)))
+        # Word-wrap to fit within 90% of the width.
+        max_w = w * 0.9
+        words = text.split()
+        lines: List[str] = []
+        cur = ""
+        for word in words:
+            trial = f"{cur} {word}".strip()
+            if draw.textlength(trial, font=font) <= max_w or not cur:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+        if cur:
+            lines.append(cur)
+
+        bbox = font.getbbox("Ag")
+        line_h = (bbox[3] - bbox[1]) + 12
+        y = int(h * 0.06)
+        for line in lines:
+            lw = draw.textlength(line, font=font)
+            x = (w - lw) / 2
+            draw.text(
+                (x, y), line, font=font, fill=(255, 221, 0),
+                stroke_width=max(3, int(w / 240)), stroke_fill=(0, 0, 0),
+            )
+            y += line_h
+
+    img.save(thumb_path, "JPEG", quality=90)
+    try:
+        frame_path.unlink()
+    except OSError:
+        pass
+    logger.info(f"Created thumbnail: {thumb_path}")
+    return thumb_path
 
 
 def _cut_simple(
