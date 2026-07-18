@@ -272,13 +272,13 @@ class ViralScorer:
         return response["message"]["content"]
 
     def _get_openai_compatible_response(
-        self, prompt: str, base_url: str | None = None
+        self, prompt: str, base_url: str | None = None, api_key: str | None = None
     ) -> str:
         from openai import OpenAI
         url = base_url or self.config.cloud_api_base
         # Local OpenAI-compatible servers (LM Studio, Ollama, etc.) don't need a
         # real key, but the OpenAI client requires one to be set.
-        api_key = os.environ.get("OPENAI_API_KEY") or "not-needed"
+        api_key = api_key or os.environ.get("OPENAI_API_KEY") or "not-needed"
         client = OpenAI(base_url=url, api_key=api_key)
         response = client.chat.completions.create(
             model=self.model,
@@ -358,6 +358,17 @@ class ViralScorer:
                 )
             except Exception as e:
                 logger.error(f"LM Studio failed: {e}")
+                raise RuntimeError(f"LLM call failed: {e}")
+
+        if self.provider == "groq":
+            try:
+                return self._get_openai_compatible_response(
+                    prompt,
+                    base_url=self.config.groq_api_base,
+                    api_key=self.config.groq_api_key or os.environ.get("GROQ_API_KEY"),
+                )
+            except Exception as e:
+                logger.error(f"Groq failed: {e}")
                 raise RuntimeError(f"LLM call failed: {e}")
 
         if self.provider == "openai":

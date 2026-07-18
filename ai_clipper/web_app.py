@@ -88,14 +88,30 @@ with st.sidebar:
 
     llm_provider = st.selectbox(
         "LLM provider",
-        ["LM Studio (local)", "Ollama (local)", "local (llama-cpp)", "openai"],
+        ["LM Studio (local)", "Groq (free cloud)", "Ollama (local)", "local (llama-cpp)", "openai"],
         index=0,
-        help="LM Studio / Ollama run locally with no API key. Pick the one you have running.",
+        help="LM Studio runs locally free. Groq is a free cloud API (no card). Pick what you have.",
     )
 
     lmstudio_api_base = "http://127.0.0.1:1234/v1"
+    groq_api_key = os.environ.get("GROQ_API_KEY", "")
     cloud_model = ""
-    if "LM Studio" in llm_provider:
+    if "Groq" in llm_provider:
+        llm_provider_key = "groq"
+        llm_model = st.text_input(
+            "Groq model",
+            os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile"),
+            help="Free Groq model, e.g. llama-3.3-70b-versatile or llama-3.1-8b-instant.",
+        )
+        groq_api_key = st.text_input(
+            "Groq API key (free)",
+            os.environ.get("GROQ_API_KEY", ""),
+            type="password",
+            help="Get a free key at https://console.groq.com/keys (no credit card).",
+        )
+        if not groq_api_key:
+            st.caption("Get a free key at https://console.groq.com/keys — no card needed.")
+    elif "LM Studio" in llm_provider:
         llm_provider_key = "lmstudio"
         llm_model = st.text_input(
             "LM Studio model",
@@ -251,6 +267,7 @@ def _build_config() -> ClipperConfig:
         llm_model=llm_model,
         cloud_model=cloud_model,
         lmstudio_api_base=lmstudio_api_base,
+        groq_api_key=groq_api_key,
         num_clips=top_n,
         target_clip_duration=float(target_duration),
         clip_duration_tolerance=float(tolerance),

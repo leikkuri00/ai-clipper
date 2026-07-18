@@ -30,10 +30,14 @@ class ClipperConfig:
     )
 
     # LLM scoring
-    llm_provider: Literal["local", "ollama", "openai", "lmstudio", "router"] = "local"
+    llm_provider: Literal[
+        "local", "ollama", "openai", "lmstudio", "groq", "router"
+    ] = "local"
     llm_model: str = field(default_factory=lambda: os.environ.get("LLAMA_MODEL_PATH", ""))
     cloud_model: str = "gpt-4o-mini"
     cloud_api_base: str = "https://api.openai.com/v1"
+    # Groq's free OpenAI-compatible cloud endpoint (free API key, no card).
+    groq_api_base: str = "https://api.groq.com/openai/v1"
     # LM Studio's local OpenAI-compatible server (no API key required).
     lmstudio_api_base: str = field(
         default_factory=lambda: os.environ.get(
