@@ -141,9 +141,15 @@ def create_ass_subtitle_file(
     ]
 
     if hook_title and config.show_hook_title:
+        # Wrap the title so long lines don't overflow the frame edges
+        # (WrapStyle 2 disables auto-wrapping, so we insert \N manually).
+        title_wrap = max(12, int(max_chars * font_size / max(1, title_font_size)))
+        wrapped = _wrap_title(hook_title, title_wrap, max_lines=3)
         title_text = (
-            hook_title.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+            wrapped.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
         )
+        # Restore the intended ASS line break after escaping backslashes.
+        title_text = title_text.replace("\\\\N", "\\N")
         title_end = _format_ass_time(max(0.5, config.hook_title_duration))
         lines.append(
             f"Dialogue: 1,0:00:00.00,{title_end},HookTitle,,0,0,0,,{title_text}"
@@ -209,6 +215,36 @@ def create_ass_subtitle_file(
     output_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info(f"Created ASS subtitle: {output_path}")
     return output_path
+
+
+def _wrap_title(text: str, width: int, max_lines: int = 3) -> str:
+    """Word-wrap a hook title to fit the frame, joined with ASS line breaks (\\N).
+
+    Keeps at most ``max_lines`` lines; if the text is longer it is truncated
+    with an ellipsis so the title never overflows the video edges.
+    """
+    words = text.split()
+    if not words:
+        return text
+    lines: List[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= width or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+            if len(lines) == max_lines:
+                break
+    if len(lines) < max_lines and current:
+        lines.append(current)
+    # If we ran out of line budget before consuming all words, add an ellipsis.
+    consumed = sum(len(l.split()) for l in lines)
+    if consumed < len(words):
+        if lines:
+            lines[-1] = lines[-1].rstrip(".") + "…"
+    return "\\N".join(lines)
 
 
 def _format_ass_time(seconds: float) -> str:
